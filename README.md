@@ -9,9 +9,9 @@
 
 開発からインフラまで、実際に手を動かしながら学んできました。インフラは独学で始めましたが、**「動かすこと」だけでなく「なぜそう動くか」を説明できるレベル** を重視し、トラブルを自分で切り分けて解決する経験を重ねています。
 
-- **クラウド**: AWS (EC2, EBS, Security Group, DLM), Azure, Oracle Cloud (ATP)
+- **クラウド**: AWS (EC2, EBS, Security Group, DLM), Azure, Oracle Cloud (ATP), Railway (PaaS)
 - **コンテナ / デプロイ**: Docker, Docker Compose, マルチステージビルド, GitHub Actions (自動デプロイ), GHCR / Docker Hub, 手動デプロイ
-- **サーバ運用**: Nginx / Apache (リバースプロキシ, TLS 終端, WebSocket プロキシ), Let's Encrypt TLS, Linux (Ubuntu) 運用, 監視 (Netdata), バックアップ自動化 (cron, DLM)
+- **サーバ運用**: Nginx / Apache (リバースプロキシ, TLS 終端, WebSocket プロキシ), Let's Encrypt TLS, Cloudflare Tunnel, Linux (Ubuntu) 運用, 監視 (Netdata), バックアップ自動化 (cron, DLM)
 - **保有資格**: AWS Certified Solutions Architect – Associate (SAA)
 
 ---
@@ -40,7 +40,41 @@
 
 ---
 
-### 2. VR-Curator (AI Exhibition) — 3サービス構成のインフラ・デプロイ主導 ✅ *(完了)*
+### 2. Ai-Myaong (AIみゃおん) — IoT プラットフォームのインフラ・デプロイ主導 ✅ *(完了)*
+
+カメラ映像から **YOLO で物体検出**を行い、留守中の人物検知・活動量記録・遠隔給餌を提供するペット見守り IoT プラットフォーム。Web アプリケーションと、ローカルの推論処理・ハードウェア群を連携させる構成が求められ、**インフラ・デプロイ領域を主導**しました。
+
+> **担当範囲の明記**: **主導** = Railway へのデプロイ構成全般、マルチステージ Dockerfile によるフロントエンド同梱ビルド、ビルド時変数と実行時変数の分離設計、Oracle ATP のウォレット注入、Cloudflare Tunnel による映像配信経路の構築。**チーム協議のうえ反映** = 推論処理の実行場所 (Raspberry Pi → デスクトップ)、映像配信をバックエンド経由にしない方針。**調整のみ** = 映像推論ワーカーのアプリケーションコード (原因箇所を特定し根拠とともに担当者へ引き継ぎ、実装変更は担当外)。
+
+**構築したもの**
+- マルチステージ Dockerfile でフロントエンドのビルド成果物をバックエンドイメージに同梱し、FastAPI から静的配信 → **同一オリジン化**により CORS 設定と公開サービス数の両方を削減
+- Oracle ATP のウォレットを **base64 化した環境変数**として保持し、起動時に展開 (Railway のファイルシステムは再デプロイで初期化されるため)
+- **Cloudflare Tunnel** でローカルの HTTP 映像を HTTPS 化し、mixed content によるブロックを回避
+
+**主な成果① — 演算とホスティングの分離 (料金モデルからの設計判断)**
+YOLO 推論は CPU を継続的に占有するワークロードであり、**コンテナ稼働時間で課金される PaaS の料金モデルとは相性が悪い**。一方 API と静的配信は待機型で PaaS に適している。そこで **演算はローカル、状態管理とホスティングはクラウド**に分離し、両者の間は検出座標 (軽量な JSON) のみをやり取りする構成とした。
+
+映像自体はバックエンドを経由させずトンネル経由でブラウザへ直接配信。MJPEG はフレームごとに完全な JPEG を送るため、クラウドを中継させると帯域コストと遅延の双方が増加するためである。
+
+結果として**映像の経路と検出結果の経路が独立**し、設計上の副次効果として障害の切り分けが容易になった。
+
+**主な成果② — ビルド時設定と実行時設定の境界を定める**
+Vite はクライアント側の設定値をビルド成果物に埋め込むため、`VITE_*` の変更には再ビルドを要する。本構成で最も変更頻度が高い値は**映像ストリーム URL** (一時トンネルは起動のたびに URL が変わる) であったが、実装を確認すると、ビルド時変数が設定されている場合は実行時エンドポイントが呼ばれない構造になっていた。
+
+つまり動作はしていたが、**URL が変わるたび再ビルドが必要な状態に固定されていた**。加えて既定値がアプリ自身のルート URL であったため、設定漏れ時に「エラーを出さず映像だけ表示されない」形で失敗するリスクもあった。
+
+**学んだこと**
+- **設定値は「変更コストがどこに蓄積するか」で配置を決める** — 動作している構成でも、変更頻度と反映コストが噛み合っていなければ運用上の負債になる
+- **経路を分ければ障害も切り分けられる** — 「映像は正常だが検出枠だけ止まる」のように、構成の分離がそのまま診断の手がかりになる。設計は可用性だけでなく**診断可能性**も決める
+- **エラーらしさと実際の異常を切り離して読む** — トンネルの `stream canceled ... error code 0` は HTTP/2 の `NO_ERROR` で正常終了を示す。異常の有無ではなく**発生頻度**を指標として扱った
+- **担当の境界を守りつつ、原因は特定して引き継ぐ** — 担当外でも切り分けと根拠の提示まで行うことで、チームとしての解決速度は上がる
+
+🔗 リポジトリ: [Ai-Myaong_IoT_project](https://github.com/xorb811-ship-it/Ai-Myaong_IoT_project/tree/deployfinal) *(ブランチ: `deployfinal`)*
+📁 詳細: [team-projects/ai-myaong.md](./team-projects/ai-myaong.md)
+
+---
+
+### 3. VR-Curator (AI Exhibition) — 3サービス構成のインフラ・デプロイ主導 ✅ *(完了)*
 
 React + Three.js の 3D 仮想展示館に、Spring Boot (API / WebSocket) と FastAPI + Gemini (AI ドーセント解説) を組み合わせた展示プラットフォーム。**インフラ・デプロイ領域を主導** しました。
 
@@ -70,7 +104,7 @@ DB 移行自体は約 20 分で完了しましたが、**移行した ATP をコ
 
 ---
 
-### 3. bitemate (Team-CAL) — マルチサービス構成のインフラ・CI 担当 ✅ *(完了)*
+### 4. bitemate (Team-CAL) — マルチサービス構成のインフラ・CI 担当 ✅ *(完了)*
 
 Spring Boot + React + FastAPI (OpenCV / YOLO による来店客数カウント) + React Native のモノレポ構成のチーム開発。インフラ・CI・DB 接続の領域を担当しました。
 
@@ -96,13 +130,16 @@ Spring Boot + React + FastAPI (OpenCV / YOLO による来店客数カウント) 
 
 ## デプロイ方式の使い分け
 
-3 プロジェクトを通じて、**要件・規模に応じてデプロイ方式を選択**する経験を得ました。
+4 プロジェクトを通じて、**要件・規模・料金モデルに応じて実行基盤とデプロイ方式を選択**する経験を得ました。
 
-| プロジェクト | デプロイ方式 | 選択理由 |
-| --- | --- | --- |
-| DevDesk | 自動 (GitHub Actions) | 個人運用のため、CI/CD の全工程を自ら構築・検証 |
-| bitemate | CI 自動 + 適用は手動 | イメージ push までは自動化し、稼働中サービスへの不意な再起動を防ぐため適用はオペレーター判断 |
-| VR-Curator | 手動 (build → GHCR push → EC2 pull) | 「デプロイのみ」という要件に合わせ、過剰に自動化しない判断 |
+| プロジェクト | 実行基盤 | デプロイ方式 | 選択理由 |
+| --- | --- | --- | --- |
+| DevDesk | AWS EC2 (IaaS) | 自動 (GitHub Actions) | 個人運用のため、CI/CD の全工程を自ら構築・検証 |
+| Ai-Myaong | Railway (PaaS) + ローカル | PaaS デプロイ + 演算はローカル | 常時 CPU を占有する推論を、稼働時間課金の PaaS に載せない判断 |
+| VR-Curator | AWS EC2 (IaaS) | 手動 (build → GHCR push → EC2 pull) | 「デプロイのみ」という要件に合わせ、過剰に自動化しない判断 |
+| bitemate | Azure VM (IaaS) | CI 自動 + 適用は手動 | イメージ push までは自動化し、稼働中サービスへの不意な再起動を防ぐため適用はオペレーター判断 |
+
+> IaaS (EC2 / Azure VM) と PaaS (Railway) の双方を扱い、**ワークロードの性質と料金モデルから基盤を選ぶ**視点を得ました。
 
 ---
 
@@ -118,11 +155,12 @@ Spring Boot + React + FastAPI (OpenCV / YOLO による来店客数カウント) 
 
 | 領域 | 技術 |
 | --- | --- |
-| Cloud | AWS (EC2, EBS, DLM, Security Group), Azure, Oracle Cloud (ATP) |
+| Cloud | AWS (EC2, EBS, DLM, Security Group), Azure, Oracle Cloud (ATP), Railway (PaaS) |
 | Container | Docker, Docker Compose, マルチステージビルド |
 | Registry | GHCR (GitHub Container Registry), Docker Hub |
-| デプロイ | GitHub Actions (自動), 手動デプロイ (build → push → pull & up) |
-| Web/Proxy | Nginx / Apache (リバースプロキシ, TLS 終端, WebSocket プロキシ), Let's Encrypt TLS |
+| デプロイ | GitHub Actions (自動), PaaS デプロイ, 手動デプロイ (build → push → pull & up) |
+| Web/Proxy | Nginx / Apache (リバースプロキシ, TLS 終端, WebSocket プロキシ), Let's Encrypt TLS, Cloudflare Tunnel |
+| IoT / Edge | Raspberry Pi, ESP32, MQTT (HiveMQ), MJPEG ストリーミング |
 | OS/Runtime | Linux (Ubuntu), Java 17, Node.js, Python |
 | 監視/運用 | Netdata, バックアップ自動化 (cron, DLM) |
 
